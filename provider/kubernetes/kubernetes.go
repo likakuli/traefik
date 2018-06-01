@@ -177,8 +177,9 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			}
 
 			for _, pa := range r.HTTP.Paths {
-				if _, exists := templateObjects.Backends[r.Host+pa.Path]; !exists {
-					templateObjects.Backends[r.Host+pa.Path] = &types.Backend{
+				baseName := fmt.Sprintf("%s%s%d", r.Host, pa.Path, time.Now().Nanosecond())
+				if _, exists := templateObjects.Backends[baseName]; !exists {
+					templateObjects.Backends[baseName] = &types.Backend{
 						Servers: make(map[string]types.Server),
 						LoadBalancer: &types.LoadBalancer{
 							Method: "wrr",
@@ -191,7 +192,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 
 				if realm := i.Annotations[annotationKubernetesAuthRealm]; realm != "" && realm != traefikDefaultRealm {
 					log.Errorf("Value for annotation %q on ingress %s/%s invalid: no realm customization supported", annotationKubernetesAuthRealm, i.ObjectMeta.Namespace, i.ObjectMeta.Name)
-					delete(templateObjects.Backends, r.Host+pa.Path)
+					delete(templateObjects.Backends, baseName)
 					continue
 				}
 
@@ -199,7 +200,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 
 				whitelistSourceRange := getSliceAnnotation(i, annotationKubernetesWhitelistSourceRange)
 
-				if _, exists := templateObjects.Frontends[r.Host+pa.Path]; !exists {
+				if _, exists := templateObjects.Frontends[baseName]; !exists {
 					basicAuthCreds, err := handleBasicAuthConfig(i, k8sClient)
 					if err != nil {
 						log.Errorf("Failed to retrieve basic auth configuration for ingress %s/%s: %s", i.ObjectMeta.Namespace, i.ObjectMeta.Name, err)
@@ -231,8 +232,8 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 						IsDevelopment:           getBoolAnnotation(i, annotationKubernetesIsDevelopment, false),
 					}
 
-					templateObjects.Frontends[r.Host+pa.Path] = &types.Frontend{
-						Backend:              r.Host + pa.Path,
+					templateObjects.Frontends[baseName] = &types.Frontend{
+						Backend:              baseName,
 						PassHostHeader:       passHostHeader,
 						PassTLSCert:          passTLSCert,
 						Routes:               make(map[string]types.Route),
@@ -251,8 +252,8 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 						rule = "HostRegexp:" + strings.Replace(r.Host, "*", "{subdomain:[A-Za-z0-9-_]+}", 1)
 					}
 
-					if _, exists := templateObjects.Frontends[r.Host+pa.Path].Routes[r.Host]; !exists {
-						templateObjects.Frontends[r.Host+pa.Path].Routes[r.Host] = types.Route{
+					if _, exists := templateObjects.Frontends[baseName].Routes[r.Host]; !exists {
+						templateObjects.Frontends[baseName].Routes[r.Host] = types.Route{
 							Rule: rule,
 						}
 					}
@@ -260,7 +261,14 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 
 				rule := getRuleForPath(pa, i)
 				if rule != "" {
-					templateObjects.Frontends[r.Host+pa.Path].Routes[pa.Path] = types.Route{
+					templateObjects.Frontends[baseName].Routes[pa.Path] = types.Route{
+						Rule: rule,
+					}
+				}
+
+				rule = getOtherRule(i)
+				if rule != "" {
+					templateObjects.Frontends[baseName].Routes["others"] = types.Route{
 						Rule: rule,
 					}
 				}
@@ -273,29 +281,29 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 
 				if !exists {
 					log.Errorf("Service not found for %s/%s", i.ObjectMeta.Namespace, pa.Backend.ServiceName)
-					delete(templateObjects.Frontends, r.Host+pa.Path)
+					delete(templateObjects.Frontends, baseName)
 					continue
 				}
 
 				if expression := service.Annotations[types.LabelTraefikBackendCircuitbreaker]; expression != "" {
-					templateObjects.Backends[r.Host+pa.Path].CircuitBreaker = &types.CircuitBreaker{
+					templateObjects.Backends[baseName].CircuitBreaker = &types.CircuitBreaker{
 						Expression: expression,
 					}
 				}
 
 				if service.Annotations[types.LabelBackendLoadbalancerMethod] == "drr" {
-					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Method = "drr"
+					templateObjects.Backends[baseName].LoadBalancer.Method = "drr"
 				}
 
 				if sticky := service.Annotations[types.LabelBackendLoadbalancerSticky]; len(sticky) > 0 {
 					log.Warnf("Deprecated configuration found: %s. Please use %s.", types.LabelBackendLoadbalancerSticky, types.LabelBackendLoadbalancerStickiness)
-					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Sticky = strings.EqualFold(strings.TrimSpace(sticky), "true")
+					templateObjects.Backends[baseName].LoadBalancer.Sticky = strings.EqualFold(strings.TrimSpace(sticky), "true")
 				}
 
 				if service.Annotations[types.LabelBackendLoadbalancerStickiness] == "true" {
-					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Stickiness = &types.Stickiness{}
+					templateObjects.Backends[baseName].LoadBalancer.Stickiness = &types.Stickiness{}
 					if cookieName := service.Annotations[types.LabelBackendLoadbalancerStickinessCookieName]; len(cookieName) > 0 {
-						templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Stickiness.CookieName = cookieName
+						templateObjects.Backends[baseName].LoadBalancer.Stickiness.CookieName = cookieName
 					}
 				}
 
@@ -310,7 +318,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 							url := protocol + "://" + service.Spec.ExternalName
 							name := url
 
-							templateObjects.Backends[r.Host+pa.Path].Servers[name] = types.Server{
+							templateObjects.Backends[baseName].Servers[name] = types.Server{
 								URL:    url,
 								Weight: 1,
 							}
@@ -338,7 +346,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 									if address.TargetRef != nil && address.TargetRef.Name != "" {
 										name = address.TargetRef.Name
 									}
-									templateObjects.Backends[r.Host+pa.Path].Servers[name] = types.Server{
+									templateObjects.Backends[baseName].Servers[name] = types.Server{
 										URL:    url,
 										Weight: 1,
 									}
@@ -388,6 +396,14 @@ func getRuleForPath(pa v1beta1.HTTPIngressPath, i *v1beta1.Ingress) string {
 	}
 
 	return strings.Join(rules, ";")
+}
+
+func getOtherRule(i *v1beta1.Ingress) string {
+	ruleType := i.Annotations[types.LabelFrontendRuleType]
+	if ruleType == "" {
+		return ""
+	}
+	return ruleType
 }
 
 func getPriority(i *v1beta1.Ingress) int {
