@@ -170,6 +170,8 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			continue
 		}
 
+		random := time.Now().Nanosecond()
+
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
 				log.Warn("Error in ingress: HTTP is nil")
@@ -177,7 +179,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			}
 
 			for _, pa := range r.HTTP.Paths {
-				baseName := fmt.Sprintf("%s%s%d", r.Host, pa.Path, time.Now().Nanosecond())
+				baseName := fmt.Sprintf("%s%s%d", r.Host, pa.Path, random)
 				if _, exists := templateObjects.Backends[baseName]; !exists {
 					templateObjects.Backends[baseName] = &types.Backend{
 						Servers: make(map[string]types.Server),
