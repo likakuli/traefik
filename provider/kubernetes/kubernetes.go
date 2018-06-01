@@ -387,7 +387,7 @@ func getRuleForPath(pa v1beta1.HTTPIngressPath, i *v1beta1.Ingress) string {
 	}
 
 	ruleType := i.Annotations[types.LabelFrontendRuleType]
-	if ruleType == "" {
+	if ruleType == "" || !strings.HasPrefix(ruleType, ruleTypePathPrefix) && !strings.HasPrefix(ruleType, ruleTypeReplacePath) {
 		ruleType = ruleTypePathPrefix
 	}
 
