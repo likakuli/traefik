@@ -170,7 +170,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			continue
 		}
 
-		random := time.Now().Nanosecond()
+		random := string(i.UID)
 
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
