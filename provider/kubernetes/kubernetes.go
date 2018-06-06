@@ -179,7 +179,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			}
 
 			for _, pa := range r.HTTP.Paths {
-				baseName := fmt.Sprintf("%s%s%d", r.Host, pa.Path, random)
+				baseName := fmt.Sprintf("%s%s%s", r.Host, pa.Path, random)
 				if _, exists := templateObjects.Backends[baseName]; !exists {
 					templateObjects.Backends[baseName] = &types.Backend{
 						Servers: make(map[string]types.Server),
